@@ -4,110 +4,123 @@ import numpy as np                    # Библиотека для матема
 import matplotlib.pyplot as plt       # Библиотека для построения графиков и рисунков
 import statsmodels.api as sm          # Библиотека для математического сглаживания LOWESS
 from scipy.optimize import curve_fit  # Библиотека для подгонки теоретической экспоненты
+import os                             # Библиотека для работы с путями (автоопределение папки)
 
 # ОПРЕДЕЛЕНИЕ МАТЕМАТИЧЕСКОЙ МОДЕЛИ
 # Функция идеальной экспоненты насыщения: C(t) = C_max * (1 - e^(-k * t))
-# t - время, C_max - предел насыщения раствора, k - константа скорости
 def expo_model (t, C_max, k):
-    return C_max*(1-np.exp(-k*t))
+    return C_max * (1 - np.exp(-k * t))
 
-# 1. ЗАГРУЗКА ЭКСЕЛЬ ТАБЛИЦЫ
-# Буква r перед строкой пути нужна, чтобы Windows корректно считывал обратные слэши \
-excel_file = r"c:\Users\USER\OneDrive\Desktop\ЧАААЙ!!!\Дополнительные  значения.xlsx"
-sheet_name ="n=1"         # Имя листа в вашем файле Excel
+# НАСТРОЙКА ПУТЕЙ (Относительный путь для репозитория)
+current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
+excel_file = os.path.join(current_dir, "Дополнительные  значения.xlsx")
+
 t_col = "t, c"             # Название колонки с временем
 I_col = "I, мА"           # Название колонки с током
-output_image = "n1_final1.png"  # Имя файла для сохранения графика
+x_error = 0.5             # Фиксированная погрешность времени по оси X (0.5 секунды)
 
-# Считываем данные из указанного листа Excel в таблицу pandas (df)
-df = pd.read_excel(excel_file, sheet_name=sheet_name)
+# ==============================================================================
+# КОНФИГУРАЦИЯ НАСТРОЕК ДЛЯ КАЖДОГО ЛИСТА
+# Здесь прописаны индивидуальные константы для формул обработки листов n=1 и n=2
+# ==============================================================================
+sheets_config = {
+    "n=1": {
+        "I_start": 2.22,
+        "I_end": 1.43,
+        "title": "Зависимость c(t) при первой заварке (n=1)",
+        "output_image": "n1_final1.png",
+        "result_sheet": "Результаты n=1"
+    },
+    "n=2": {
+        "I_start": 2.15,
+        "I_end": 1.60,
+        "title": "Зависимость c(t) при второй заварке (n=2)",
+        "output_image": "n2_final2.png",
+        "result_sheet": "Результаты n=2"
+    }
+}
 
-# Сортируем строки по возрастанию времени, чтобы линия сглаживания LOWESS шла последовательно
-df = df.sort_values(by=t_col).reset_index(drop=True)
+# ==============================================================================
+# ОСНОВНОЙ ЦИКЛ ОБРАБОТКИ ДАННЫХ
+# ==============================================================================
+for sheet_name, cfg in sheets_config.items():
+    print(f"\n--- Обработка листа: {sheet_name} ---")
+    
+    try:
+        # 1. ЗАГРУЗКА И ПОДГОТОВКА ДАННЫХ
+        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+        df = df.sort_values(by=t_col).reset_index(drop=True)
+        
+        # 2. ПЕРЕСЧЕТ С ЛОГАРИФМОМ И ВЫЧИСЛЕНИЕ ПОГРЕШНОСТЕЙ ПО ИНДИВИДУАЛЬНЫМ ФОРМУЛАМ
+        I0 = cfg["I_start"]
+        Ik = cfg["I_end"]
+        
+        # Индивидуальная формула концентрации для текущего листа
+        df['c'] = np.log(df[I_col] / I0) / np.log(Ik / I0) * 100
+        
+        # Расчет погрешности по оси Y
+        df["delta c"] = df['c'] * (0.01 / df[I_col] + 0.01 / I0)
 
-# 2. ПЕРЕСЧЕТ С ЛОГАРИФМОМ И ВЫЧИСЛЕНИЕ ПОГРЕШНОСТЕЙ
-# Расчет концентрации 'c' по формуле
-df['c'] = np.log((df[I_col])/2.22)/np.log(1.43/2.22)*100
+        # 3. МАТЕМАТИЧЕСКОЕ СГЛАЖИВАНИЕ (LOWESS) И ЭКСПОНЕНТА
+        lowess = sm.nonparametric.lowess
+        smoothed_data = lowess(df["c"], df[t_col], frac=0.5)
+        df["smooth c"] = smoothed_data[:, 1]
 
-# Задаем фиксированную погрешность времени по оси X (0.5 секунды)
-x_error = 0.5
+        # Подгонка идеальной экспоненты
+        popt, _ = curve_fit(expo_model, df[t_col], df["c"], p0=[100, 0.05])
+        C_max_opt, k_opt = popt
 
-# Расчет индивидуальной погрешности по формуле для каждой точки по оси Y
-df["delta c"] = df['c']*(0.01/df[I_col]+0.01/2.15)
+        # Сетка для построения плавной теоретической кривой
+        t_smooth = np.linspace(df[t_col].min(), df[t_col].max(), 300)
+        c_expo_smooth = expo_model(t_smooth, C_max_opt, k_opt)
 
-# 3. МАТЕМАТИЧЕСКОЕ СГЛАЖИВАНИЕ (LOWESS) И ЭКСПОНЕНТА
-# Инициализируем метод локального сглаживания тренда
-lowess = sm.nonparametric.lowess
+        # 4. ПОСТРОЕНИЕ И ОФОРМЛЕНИЕ ГРАФИКА
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+        fig.subplots_adjust(left=0.15, bottom=0.12, right=0.95, top=0.90)
 
-# На основе точек 'c' и времени рассчитываем сглаженную линию
-# frac=0.6 задает степень плавности.
-smoothed_data = lowess(df["c"], df[t_col], frac=0.5)
-df["smooth c"] = smoothed_data[:, 1]  # Сохраняем полученные сглаженные значения Y
+        # Экспериментальные точки
+        plt.errorbar(
+            df[t_col], df["c"], 
+            xerr=x_error,                   
+            yerr=df["delta c"],             
+            fmt='o',                        
+            color="#8B4513",                
+            ecolor="#A0522D",               
+            elinewidth=1.5,                 
+            capsize=2,                      
+            ms=2,                           
+            zorder=5,                       
+            label="Рассчитанная концентрация с погрешностью"
+        )
 
-# Подгоняем функцию идеальной экспоненты под ваши рассчитанные точки 'c'
-# p0=[100, 0.05] — начальное приближение для алгоритма (предел 100%, скорость 0.05)
-popt, _ = curve_fit(expo_model, df[t_col], df["c"], p0=[100, 0.05])
-C_max_opt, k_opt = popt  # Программа находит оптимальные значения C_max и k
+        # Сглаженный тренд LOWESS
+        plt.plot(df[t_col], df["smooth c"], color="#D2691E", linewidth=1.5, zorder=4, label="Сглаженный тренд")
 
-# Создаем плотную сетку времени (300 точек от мин до макс), чтобы линия экспоненты была идеально плавной
-t_smooth = np.linspace(df[t_col].min(), df[t_col].max(), 300)
-# Рассчитываем значения Y для теоретической экспоненты
-c_expo_smooth = expo_model(t_smooth, C_max_opt, k_opt)
+        # Теоретическая экспонента
+        plt.plot(t_smooth, c_expo_smooth, 
+                 color="#00008B", linewidth=1, linestyle="--", zorder=3, 
+                 label=f"Идеальная экспонента ($t$={1/k_opt:.1f} c)")
 
-# 4. ПОСТРОЕНИЕ И ОФОРМЛЕНИЕ ГРАФИКА 
-# Создаем окно графика с высоким разрешением (dpi=300) для четкости текста
-fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+        # Подписи и заголовки
+        plt.title(cfg["title"], fontsize=14, fontweight='bold', pad=15)
+        plt.xlabel('Время t, c', fontsize=12)
+        plt.ylabel('Концентрация с, % от насыщения', fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.6) 
+        plt.legend()
 
-# НАСТРОЙКА ПОЛЕЙ: жестко задаем отступы (слева=15% от ширины окна, снизу=12%)
-# Это гарантирует, что подписи осей "Концентрация" и "Время" больше никогда не обрежутся!
-fig.subplots_adjust(left=0.15, bottom=0.12, right=0.95, top=0.90)
+        # 5. СОХРАНЕНИЕ ГРАФИКА И РЕЗУЛЬТАТОВ
+        img_path = os.path.join(current_dir, cfg["output_image"])
+        plt.savefig(img_path, bbox_inches="tight")
+        print(f"✅ График сохранен как: {img_path}")
+        plt.close() # Закрываем текущую фигуру, чтобы графики не накладывались в памяти
 
-# Рисуем экспериментальные точки с крестами погрешностей по осям X и Y
-plt.errorbar(
-    df[t_col], df["c"], 
-    xerr=x_error,                   # Погрешность по горизонтали (X)
-    yerr=df["delta c"],             # Погрешность по вертикали (Y)
-    fmt='o',                        # Формат маркера ('o' — круглые точки)
-    color="#8B4513",                # Коричневый цвет для точек и крестов
-    ecolor="#A0522D",               # Цвет самих линий погрешностей (чуть светлее)
-    elinewidth=1.5,                 # Толщина линий погрешностей
-    capsize=2,                      # Размер засечек на концах крестов погрешности
-    ms=2,                           # Размер самой точки 
-    zorder=5,                       # Слой отображения (5 — поверх линий)
-    label="Рассчитанная концентрация с погрешностью"
-)
+        # Дописываем результаты расчетов на новый лист в тот же Excel-файл
+        with pd.ExcelWriter(excel_file, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
+            df.to_excel(writer, sheet_name=cfg["result_sheet"], index=False)
+        print(f"✅ Расчеты сохранены в Excel на лист '{cfg['result_sheet']}'")
 
-# Рисуем сплошную линию эмпирического сглаженного тренда LOWESS
-plt.plot(df[t_col], df["smooth c"], 
-         color="#D2691E", linewidth=1.5, zorder=4, label="Сглаженный тренд")
+    except Exception as e:
+        print(f"❌ Ошибка при обработке листа {sheet_name}: {e}")
 
-# Рисуем теоретическую экспоненту пунктирной линией для визуального контраста
-# В подпись автоматически вставляется рассчитанное физическое значение 1/k
-plt.plot(t_smooth, c_expo_smooth, 
-         color="#00008B", linewidth=1, linestyle="--", zorder=3, 
-         label=f"Идеальная экспонента ($t$={1/k_opt:.1f} c)")
-
-# Текстовое оформление графика
-plt.title('Зависимость c(t) при первой заварке', fontsize=14, fontweight='bold', pad=15)
-plt.xlabel('Время t, c', fontsize=12)
-plt.ylabel('Концентрация с, % от насыщения', fontsize=12)
-
-# Добавляем на график сетку (штриховая линия с прозрачностью 60%)
-plt.grid(True, linestyle='--', alpha=0.6) 
-
-# Выводим блок легенды (описание линий и точек)
-plt.legend()
-
-# 5. СОХРАНЕНИЕ РЕЗУЛЬТАТОВ
-# Сохраняем картинку графика в файл (bbox_inches="tight" дополнительно страхует от обрезания)
-plt.savefig(output_image, bbox_inches="tight")
-print(f"✅ График успешно сохранен как: {output_image}")
-
-# Записываем итоговую таблицу со всеми расчетами в Excel-файл на новый лист
-with pd.ExcelWriter(excel_file, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
-    df.to_excel(writer, sheet_name="Результаты n=1", index=False)
-
-print(f"✅ Все расчеты и изменения сохранены в Excel на лист 'Результаты n=1'")
-
-# Вывод интерактивного окна с графиком на экран компьютера
-plt.show()
+# Финальный показ всех графиков (если код запускается интерактивно)
+print("\n🎉 Все листы успешно обработаны!")
