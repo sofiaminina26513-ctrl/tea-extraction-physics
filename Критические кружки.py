@@ -3,9 +3,15 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import CubicSpline  # Модуль для сглаживания кривых
 from scipy.stats import linregress
+import os                             # Добавлено для автоматического поиска папки
 
 # БЛОК НАСТРОЕК 
-excel_file_path = r"c:\Users\USER\OneDrive\Desktop\ЧАААЙ!!!\Таблица значений.xlsx"  # Ваш файл Excel
+# Автоматически определяем папку, в которой находится запущенный скрипт
+current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
+
+# Файл теперь ищется в той же папке, где лежит этот скрипт (без жестких путей вроде C:\Users\...)
+excel_file_path = os.path.join(current_dir, "Таблица значений.xlsx")
+
 results_sheet_name = "Итоги с погрешностями"  # Имя финального листа
 ignore_sheets = ["Предел чувствительности", "Результаты группировки", "Итоги с погрешностями"]  # Листы, которые не трогаем
 
@@ -77,7 +83,7 @@ for idx, sheet in enumerate(tea_sheets):
     # Строим математически сглаженную кривую (сплайн) через экспериментальные точки
     cs = CubicSpline(x_all, y_all)
     x_smooth = np.linspace(
-        x_all, x_all[-1], 200
+        x_all[0], x_all[-1], 200
     )  # 200 точек для идеальной плавности линии
     y_smooth = cs(x_smooth)
 
@@ -159,7 +165,7 @@ ax2.legend(fontsize=9, loc="upper right")
 plt.tight_layout()
 
 # СОХРАНЕНИЕ И ВЫВОД НА ЭКРАН
-plt.savefig("tea_errorbars_analysis.png", dpi=300)
+plt.savefig(os.path.join(current_dir, "tea_errorbars_analysis.png"), dpi=300)
 
 df_results = pd.DataFrame(summary_results)
 with pd.ExcelWriter(
