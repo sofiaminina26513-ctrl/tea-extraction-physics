@@ -19,7 +19,7 @@
 ## 🛠️ Зависимости и запуск
 Для работы скриптов требуются стандартные библиотеки анализа данных. Установить их можно командой:
 ```bash
-pip install numpy pandas matplotlib scipy openpyxl
+pip install numpy pandas matplotlib scipy openpyxl os
 ```
 
 ## 🎯 Основные результаты
